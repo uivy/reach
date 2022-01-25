@@ -1,0 +1,122 @@
+rsh:部分:
+
+'reach 0.1';
+'use strict';
+// 截止日期将用UInt表示，因为它是一个相对时间增量，表示块编号的变化。
+// 将ticketPrice用UInt 32表示
+// 买票的决定将由函数Fun ([UInt], Bool) 
+// 我们的参与者交互界面，加上一些方便的日志功能，目前看起来是这样的：
+const Common = {
+  // 显示获胜者地址
+  showOutcome: Fun([Address], Null),    
+};
+const Deployer = {
+  ...Common,
+  getParams: Fun([], Object({          
+    deadline: UInt,
+    itemPrice: UInt,
+  })),
+};
+const Consumer = {
+  ...Common,
+  shouldBuyItem: Fun([UInt], Bool),
+  showPurchase: Fun([Address], Null),
+};
+
+export const main = Reach.App(
+  { },
+  [
+    Participant('deployer', Deployer),
+    ParticipantClass('consumer', Consumer),
+  ],
+  (deployer, consumer) => {
+    const showOutcome = (who) =>
+      each([deployer, consumer], () => {  //向所有人显示结果的助手
+        interact.showOutcome(who); });
+        deployer.only(() => {
+      const { itemPrice, deadline } =
+        declassify(interact.getParams());
+    });
+    // 部署人设置商品价格和截止日期
+    deployer.publish(itemPrice, deadline);
+    // parallelReduce部分,允许消费者购买直到超时
+    const [ keepGoing, winner, itemsSold ] =
+      parallelReduce([ true, deployer, 0 ])
+        .invariant(balance() == itemsSold * itemPrice)  // 不变量
+        .while(keepGoing) //循环条件
+        //.case组件,就像fork语句中的对应组件根据不同情况执行不同代码
+        .case(
+          consumer,
+          () => ({
+            when: declassify(interact.shouldBuyItem(itemPrice)),// 设置解密时间
+          }),
+          (_) => itemPrice, // 门票价格
+          (_) => {
+            const myconsumer = this;
+            consumer.only(() => interact.showPurchase(myconsumer));
+            return [ true, myconsumer, itemsSold + 1 ];
+          }
+        )
+        //.throwTimeout是一种简写，当发生超时时将把累加器作为异常抛出
+        .timeout(relativeTime(deadline), () => {
+          Anybody.publish();
+          return [ false, winner, itemsSold ]; });
+          // 最后买的人获胜并获得余额
+    transfer(balance()).to(winner);
+    commit();
+    showOutcome(winner);
+  });
+
+
+mjs部分:
+
+import {loadStdlib} from '@reach-sh/stdlib';
+import * as backend from './build/index.main.mjs';
+
+const numOfConsumers = 10;  // 设置消费者数量为10
+(async () => {
+  const stdlib = await loadStdlib();
+  const startingBalance = stdlib.parseCurrency(100);
+//为资助者和任意数量的买家创建测试账户。买家购买门票的决定将仅仅依赖于生成一个随机布尔值
+  const accDeployer = await stdlib.newTestAccount(startingBalance);
+  const accConsumerArray = await Promise.all(
+    Array.from({ length: numOfConsumers }, () =>
+      stdlib.newTestAccount(startingBalance)
+    )
+  );
+
+  const ctcDeployer = accDeployer.contract(backend);
+  const ctcInfo   = ctcDeployer.getInfo();
+// 部署者参数
+  const deployerParams = {
+    itemPrice: stdlib.parseCurrency(5),
+    deadline: 5,
+  };
+// 等待后端完成
+  await Promise.all([
+    backend.deployer(ctcDeployer, {
+      showOutcome: (addr) => console.log(`Deployer saw ${stdlib.formatAddress(addr)} won.`),
+      getParams: () => deployerParams,
+    }),
+  ].concat(
+    accConsumerArray.map((accConsumer, i) => {
+      const ctcConsumer = accConsumer.contract(backend, ctcInfo);
+      return backend.consumer(ctcConsumer, {
+        showOutcome: (outcome) => {
+          console.log(`Consumer ${i} saw they ${stdlib.addressEq(outcome, accConsumer) ? 'won' : 'lost'}.`);
+        },
+        shouldBuyItem : () => Math.random() < 0.5,
+        showPurchase: (addr) => {
+          if (stdlib.addressEq(addr, accConsumer)) {
+            console.log(`Consumer ${i} got a item.`);
+          }
+        }
+      });
+    })
+  ));
+
+})();
+
+
+
+

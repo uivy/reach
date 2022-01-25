@@ -1,0 +1,197 @@
+rsh部分:
+// 改编自教程2.7-Play and Play Again
+// 这个方案是Alice和Bob都随机出一个数，比大小，类似于石头剪刀布
+'reach 0.1';
+
+const [ isOutcome, A_WINS, DRAW, B_WINS ] = makeEnum(3);
+// 修改胜者条件及返回值
+const winner = (numberAlice,numberBob) => (numberAlice>numberBob?0:numberAlice<numberBob?2:1);
+
+forall(UInt, numberAlice =>
+  forall(UInt, numberBob =>
+    assert(isOutcome(winner(numberAlice, numberBob)))));
+
+forall(UInt, (number) =>
+  assert(winner(number, number) == DRAW));
+
+
+const Player = {
+  ...hasRandom,
+  getNumber: Fun([], UInt),
+  seeOutcome: Fun([UInt], Null),
+  informTimeout: Fun([], Null),
+};
+
+export const main = Reach.App(() => {
+  const Alice = Participant('Alice', {
+    ...Player,
+    wager: UInt,
+    deadline: UInt,
+  });
+  const Bob   = Participant('Bob', {
+    ...Player,
+    acceptWager: Fun([UInt], Null),
+  });
+  init();
+
+  const informTimeout = () => {
+    each([Alice, Bob], () => {
+      interact.informTimeout();
+    });
+  };
+
+  Alice.only(() => {
+    const wager = declassify(interact.wager);
+    const deadline = declassify(interact.deadline);
+  });
+  Alice.publish(wager, deadline)
+    .pay(wager);
+  commit();
+
+  Bob.only(() => {
+    interact.acceptWager(wager);
+  });
+  Bob.pay(wager)
+    .timeout(relativeTime(deadline), () => closeTo(Alice, informTimeout));  // 发起共识转移
+    // while是一个共识步骤 前仅有一个变量var,如有多个值使用[] ,一个不变量 invariant
+    var outcome = DRAW;  // 定义一个标识符
+    invariant( balance() == 2 * wager && isOutcome(outcome) ); // 不变量,运行时检查是否满足
+    while ( outcome == DRAW ) {
+      commit();
+  
+      Alice.only(() => {
+        const _numberAlice = interact.getNumber();
+        const [_commitAlice, _saltAlice] = makeCommitment(interact, _numberAlice);
+        const commitAlice = declassify(_commitAlice);
+      });
+      Alice.publish(commitAlice)
+        .timeout(relativeTime(deadline), () => closeTo(Bob, informTimeout));
+      commit();
+  
+      unknowable(Bob, Alice(_numberAlice, _saltAlice));
+      Bob.only(() => {
+        const numberBob = declassify(interact.getNumber());
+      });
+      Bob.publish(numberBob)
+        .timeout(relativeTime(deadline), () => closeTo(Alice, informTimeout));
+      commit();
+  
+      Alice.only(() => {
+        const saltAlice = declassify(_saltAlice);
+        const numberAlice = declassify(_numberAlice);
+      });
+      Alice.publish(saltAlice, numberAlice)
+        .timeout(relativeTime(deadline), () => closeTo(Bob, informTimeout));
+      checkCommitment(commitAlice, saltAlice, numberAlice);
+  
+      outcome = winner(numberAlice, numberBob);
+      continue;
+    }
+
+    assert(outcome == A_WINS || outcome == B_WINS);
+    transfer(2 * wager).to(outcome == A_WINS ? Alice : Bob);
+    commit();
+
+  each([Alice, Bob], () => {
+    interact.seeOutcome(outcome);
+  });
+});
+
+mjs部分:
+// 修改outcome数组为number
+'reach 0.1';
+
+const [ isOutcome, A_WINS, DRAW, B_WINS ] = makeEnum(3);
+// 修改胜者条件,返回值及断言方式
+const winner = (numberAlice,numberBob) => (numberAlice>numberBob?0:numberAlice<numberBob?2:1);
+
+forall(UInt, numberAlice =>
+  forall(UInt, numberBob =>
+    assert(isOutcome(winner(numberAlice, numberBob)))));
+
+forall(UInt, (number) =>
+  assert(winner(number, number) == DRAW));
+
+
+const Player = {
+  ...hasRandom,
+  getNumber: Fun([], UInt),
+  seeOutcome: Fun([UInt], Null),
+  informTimeout: Fun([], Null),
+};
+
+export const main = Reach.App(() => {
+  const Alice = Participant('Alice', {
+    ...Player,
+    wager: UInt,
+    deadline: UInt,
+  });
+  const Bob   = Participant('Bob', {
+    ...Player,
+    acceptWager: Fun([UInt], Null),
+  });
+  init();
+
+  const informTimeout = () => {
+    each([Alice, Bob], () => {
+      interact.informTimeout();
+    });
+  };
+
+  Alice.only(() => {
+    const wager = declassify(interact.wager);
+    const deadline = declassify(interact.deadline);
+  });
+  Alice.publish(wager, deadline)
+    .pay(wager);
+  commit();
+
+  Bob.only(() => {
+    interact.acceptWager(wager);
+  });
+  Bob.pay(wager)
+    .timeout(relativeTime(deadline), () => closeTo(Alice, informTimeout));
+
+    var outcome = DRAW;
+    invariant( balance() == 2 * wager && isOutcome(outcome) );
+    while ( outcome == DRAW ) {
+      commit();
+  
+      Alice.only(() => {
+        const _numberAlice = interact.getNumber();
+        const [_commitAlice, _saltAlice] = makeCommitment(interact, _numberAlice);
+        const commitAlice = declassify(_commitAlice);
+      });
+      Alice.publish(commitAlice)
+        .timeout(relativeTime(deadline), () => closeTo(Bob, informTimeout));
+      commit();
+  
+      unknowable(Bob, Alice(_numberAlice, _saltAlice));
+      Bob.only(() => {
+        const numberBob = declassify(interact.getNumber());
+      });
+      Bob.publish(numberBob)
+        .timeout(relativeTime(deadline), () => closeTo(Alice, informTimeout));
+      commit();
+  
+      Alice.only(() => {
+        const saltAlice = declassify(_saltAlice);
+        const numberAlice = declassify(_numberAlice);
+      });
+      Alice.publish(saltAlice, numberAlice)
+        .timeout(relativeTime(deadline), () => closeTo(Bob, informTimeout));
+      checkCommitment(commitAlice, saltAlice, numberAlice);
+  
+      outcome = winner(numberAlice, numberBob);
+      continue;
+    }
+
+    assert(outcome == A_WINS || outcome == B_WINS);
+    transfer(2 * wager).to(outcome == A_WINS ? Alice : Bob);
+    commit();
+
+  each([Alice, Bob], () => {
+    interact.seeOutcome(outcome);
+  });
+});
+
