@@ -98,100 +98,58 @@ export const main = Reach.App(() => {
 });
 
 mjs部分:
-// 修改outcome数组为number
-'reach 0.1';
+import { loadStdlib } from '@reach-sh/stdlib';
+  import * as backend from './build/index.main.mjs';
+   const stdlib = loadStdlib(process.env);
+   
+   (async () => {
+      const startingBalance = stdlib.parseCurrency(100);
+     const accAlice = await stdlib.newTestAccount(startingBalance);
+      const accBob = await stdlib.newTestAccount(startingBalance);
 
-const [ isOutcome, A_WINS, DRAW, B_WINS ] = makeEnum(3);
-// 修改胜者条件,返回值及断言方式
-const winner = (numberAlice,numberBob) => (numberAlice>numberBob?0:numberAlice<numberBob?2:1);
+      const fmt = (x) => stdlib.formatCurrency(x, 4);
+    const getBalance = async (who) => fmt(await stdlib.balanceOf(who));
+    const beforeAlice = await getBalance(accAlice);
+    const beforeBob = await getBalance(accBob);
+   
+      const ctcAlice = accAlice.deploy(backend);
+      const ctcBob = accBob.attach(backend, ctcAlice.getInfo());
 
-forall(UInt, numberAlice =>
-  forall(UInt, numberBob =>
-    assert(isOutcome(winner(numberAlice, numberBob)))));
+   const OUTCOME = ['Alice wins', 'Draw', 'Bob wins'];
 
-forall(UInt, (number) =>
-  assert(winner(number, number) == DRAW));
-
-
-const Player = {
-  ...hasRandom,
-  getNumber: Fun([], UInt),
-  seeOutcome: Fun([UInt], Null),
-  informTimeout: Fun([], Null),
-};
-
-export const main = Reach.App(() => {
-  const Alice = Participant('Alice', {
-    ...Player,
-    wager: UInt,
-    deadline: UInt,
-  });
-  const Bob   = Participant('Bob', {
-    ...Player,
-    acceptWager: Fun([UInt], Null),
-  });
-  init();
-
-  const informTimeout = () => {
-    each([Alice, Bob], () => {
-      interact.informTimeout();
-    });
-  };
-
-  Alice.only(() => {
-    const wager = declassify(interact.wager);
-    const deadline = declassify(interact.deadline);
-  });
-  Alice.publish(wager, deadline)
-    .pay(wager);
-  commit();
-
-  Bob.only(() => {
-    interact.acceptWager(wager);
-  });
-  Bob.pay(wager)
-    .timeout(relativeTime(deadline), () => closeTo(Alice, informTimeout));
-
-    var outcome = DRAW;
-    invariant( balance() == 2 * wager && isOutcome(outcome) );
-    while ( outcome == DRAW ) {
-      commit();
-  
-      Alice.only(() => {
-        const _numberAlice = interact.getNumber();
-        const [_commitAlice, _saltAlice] = makeCommitment(interact, _numberAlice);
-        const commitAlice = declassify(_commitAlice);
-      });
-      Alice.publish(commitAlice)
-        .timeout(relativeTime(deadline), () => closeTo(Bob, informTimeout));
-      commit();
-  
-      unknowable(Bob, Alice(_numberAlice, _saltAlice));
-      Bob.only(() => {
-        const numberBob = declassify(interact.getNumber());
-      });
-      Bob.publish(numberBob)
-        .timeout(relativeTime(deadline), () => closeTo(Alice, informTimeout));
-      commit();
-  
-      Alice.only(() => {
-        const saltAlice = declassify(_saltAlice);
-        const numberAlice = declassify(_numberAlice);
-      });
-      Alice.publish(saltAlice, numberAlice)
-        .timeout(relativeTime(deadline), () => closeTo(Bob, informTimeout));
-      checkCommitment(commitAlice, saltAlice, numberAlice);
-  
-      outcome = winner(numberAlice, numberBob);
-      continue;
-    }
-
-    assert(outcome == A_WINS || outcome == B_WINS);
-    transfer(2 * wager).to(outcome == A_WINS ? Alice : Bob);
-    commit();
-
-  each([Alice, Bob], () => {
-    interact.seeOutcome(outcome);
-  });
-});
+    const Player = (Who) => ({
+      ...stdlib.hasRandom,
+      getNumber: async () => {
+        const number = Math.floor(Math.random() * 3);
+        console.log(`${Who} played ${number}`);
+        
+                  return number;
+                },
+                seeOutcome: (outcome) => {
+                 console.log(`${Who} saw outcome ${OUTCOME[outcome]}`);
+               },
+            
+             });
+    
+             await Promise.all([
+                    ctcAlice.p.Alice({
+                     ...Player('Alice'),
+                      wager: stdlib.parseCurrency(5),
+                      deadline: 10,
+                    }),
+                    ctcBob.p.Bob({
+                      ...Player('Bob'),
+                      acceptWager: (amt) => {
+                        console.log(`Bob accepts the wager of ${fmt(amt)}.`);
+                      },
+                    }),
+                  ]);
+    
+    const afterAlice = await getBalance(accAlice);  
+    const afterBob = await getBalance(accBob);  
+   
+    console.log(`Alice went from ${beforeAlice} to ${afterAlice}.`);  
+    console.log(`Bob went from ${beforeBob} to ${afterBob}.`);  
+     
+    })(); // <-- Don't forget these!
 
